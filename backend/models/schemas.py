@@ -28,3 +28,24 @@ class ExplainResponse(BaseModel):
     risk_level: str
     possible_cause: str
     recommended_action: str
+
+
+class AuditReportRequest(BaseModel):
+    max_transactions: int = Field(default=50, ge=1, le=500)
+
+
+class AuditReportResponse(BaseModel):
+    summary: str
+    total_flagged: int
+    high_risk: int
+    medium_risk: int
+    low_risk: int
+
+
+class ChatRequest(BaseModel):
+    question: str = Field(min_length=3, max_length=1000)
+    max_transactions: int = Field(default=30, ge=1, le=200)
+
+
+class ChatResponse(BaseModel):
+    answer: str

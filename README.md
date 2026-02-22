@@ -1,6 +1,6 @@
-﻿# AuditAI - Part 1 (Backend Foundation)
+# AuditAI - Part 2 (Backend LLM APIs)
 
-This first increment includes:
+This increment includes:
 - FastAPI backend scaffold
 - Secure `.env` based configuration
 - CSV anomaly loading service
@@ -10,6 +10,8 @@ This first increment includes:
   - `GET /anomalies`
   - `GET /anomaly/{transaction_id}`
   - `POST /explain`
+  - `POST /audit-report`
+  - `POST /chat`
 
 ## Run locally
 
@@ -28,7 +30,24 @@ uvicorn backend.main:app --reload --port 8000
 
 ```json
 {
-  "transaction_id": "TXN-1001"
+  "transaction_id": "331521"
+}
+```
+
+- Audit report (example body):
+
+```json
+{
+  "max_transactions": 50
+}
+```
+
+- Chat (example body):
+
+```json
+{
+  "question": "What are the top risk patterns in flagged transactions?",
+  "max_transactions": 30
 }
 ```
 
@@ -38,8 +57,7 @@ uvicorn backend.main:app --reload --port 8000
 - Keep secrets in App Service Configuration (Application settings), not in repo.
 
 ## Next Part
-Part 2 will add:
-- `/audit-report` and `/chat`
-- frontend (React + Vite)
-- risk distribution endpoint for dashboard chart
+Part 3 will add:
+- frontend dashboard (React + Vite)
+- risk distribution endpoint for chart-ready data
 - deployment files for Azure Static Web Apps

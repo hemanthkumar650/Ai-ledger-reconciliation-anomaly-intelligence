@@ -22,5 +22,8 @@ async def explain_transaction(
         if not anomaly:
             raise HTTPException(status_code=404, detail="Transaction not found")
 
-    explanation = await llm_service.explain_anomaly(anomaly)
+    try:
+        explanation = await llm_service.explain_anomaly(anomaly)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=502, detail=f"LLM service error: {exc}") from exc
     return ExplainResponse(transaction_id=anomaly.transaction_id, **explanation)
