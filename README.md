@@ -1,6 +1,6 @@
 # AuditAI: AI-Powered Ledger Reconciliation and Anomaly Intelligence
 
-AuditAI is a backend platform I designed and built to identify anomalous accounting transactions, explain risk using LLM reasoning, and generate audit-ready insights through APIs.
+AuditAI is a backend platform I independently designed and built end-to-end to identify anomalous accounting transactions, explain risk using LLM reasoning, and generate audit-ready insights through APIs.
 
 ## What I Built
 
