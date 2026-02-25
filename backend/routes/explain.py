@@ -13,12 +13,21 @@ async def explain_transaction(
     anomaly_service: AnomalyService = Depends(get_anomaly_service),
     llm_service: LLMService = Depends(get_llm_service),
 ) -> ExplainResponse:
+    # Normalize transaction_id so whitespace-only values are treated as missing.
+    transaction_id = request.transaction_id.strip() if request.transaction_id else None
     anomaly = request.transaction
 
+    # If both fields are provided, ensure they refer to the same transaction.
+    if anomaly is not None and transaction_id and anomaly.transaction_id != transaction_id:
+        raise HTTPException(
+            status_code=400,
+            detail="transaction_id does not match request.transaction.transaction_id",
+        )
+
     if anomaly is None:
-        if not request.transaction_id:
+        if not transaction_id:
             raise HTTPException(status_code=400, detail="Provide transaction_id or transaction payload")
-        anomaly = await anomaly_service.get_by_transaction_id(request.transaction_id)
+        anomaly = await anomaly_service.get_by_transaction_id(transaction_id)
         if not anomaly:
             raise HTTPException(status_code=404, detail="Transaction not found")
 
