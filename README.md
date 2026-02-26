@@ -29,6 +29,9 @@ AuditAI is a backend platform I independently designed and built end-to-end to i
 ### `GET /health`
 Returns service status and active LLM provider.
 
+### `GET /metrics`
+Returns in-memory request/latency/error counters and LLM call/retry/failure telemetry.
+
 ### `GET /anomalies`
 Returns all flagged transactions from the dataset.
 
@@ -91,6 +94,9 @@ AZURE_OPENAI_DEPLOYMENT=<your-chat-deployment-name>
 
 OLLAMA_BASE_URL=http://localhost:11434
 OLLAMA_MODEL=llama3.1
+
+# optional; if set, non-health routes require x-api-key header
+API_KEY=
 ```
 
 ## Quick API Examples
@@ -129,4 +135,28 @@ OLLAMA_MODEL=llama3.1
 gunicorn -k uvicorn.workers.UvicornWorker backend.main:app
 ```
 
-- Keep all secrets in Azure App Service Configuration (Application Settings), not in source control.
+## Next Part: Production Readiness
+
+### Testing Strategy
+
+- Implemented `tests/test_anomaly_service.py` for anomaly filtering and transaction lookup behavior.
+- Implemented `tests/test_api.py` for `/explain` validation, auth guard behavior, and `/metrics` assertions.
+- Implemented `tests/test_llm_service.py` to verify sensitive prompt-field redaction.
+
+### Observability
+
+- Added `ObservabilityMiddleware` with request IDs and JSON structured request logs.
+- Added in-memory endpoint metrics for request count, error count, and average latency.
+- Added LLM provider telemetry counters: total calls, retries, and failures.
+
+### Security and Compliance
+
+- Added optional API-key authentication (`x-api-key`) for non-health routes.
+- Added sensitive-field redaction before LLM explain prompts are constructed.
+- Request IDs are returned to clients for traceability in logs.
+
+### Roadmap
+
+- Support larger datasets via pagination and async processing.
+- Add configurable risk-scoring thresholds by account/category.
+- Add report export formats (PDF/CSV) for audit handoff workflows.

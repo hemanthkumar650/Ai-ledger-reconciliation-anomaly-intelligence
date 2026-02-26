@@ -9,6 +9,7 @@ from openai import APIError, APITimeoutError, AzureOpenAI, RateLimitError
 
 from backend.models.schemas import AnomalyResponse
 from backend.utils.config import Settings, get_settings
+from backend.utils.metrics import metrics_store
 
 SYSTEM_PROMPT = """You are a forensic audit copilot.
 Return ONLY valid JSON with this schema:
@@ -53,17 +54,23 @@ class LLMService:
         raise RuntimeError("Unsupported LLM provider. Use 'azure' or 'ollama'.")
 
     async def _with_retries(self, fn, anomaly: AnomalyResponse) -> dict[str, str]:
+        provider = self.settings.llm_provider
+        metrics_store.increment_llm_call(provider)
         delays = [1, 2, 4]
         for idx, delay in enumerate(delays, start=1):
             try:
                 return await fn(anomaly)
             except (RateLimitError, APITimeoutError) as exc:
                 if idx == len(delays):
+                    metrics_store.increment_llm_failure(provider)
                     raise RuntimeError(f"LLM request failed after retries: {exc}") from exc
+                metrics_store.increment_llm_retry(provider)
                 await asyncio.sleep(delay)
             except APIError as exc:
+                metrics_store.increment_llm_failure(provider)
                 raise RuntimeError(f"LLM API error: {exc}") from exc
             except json.JSONDecodeError as exc:
+                metrics_store.increment_llm_failure(provider)
                 raise RuntimeError(f"Invalid JSON from LLM: {exc}") from exc
 
         raise RuntimeError("Unreachable retry state")
@@ -122,10 +129,20 @@ class LLMService:
         return self._normalize_output(parsed)
 
     async def _text_completion(self, system_prompt: str, user_prompt: str) -> str:
+        provider = self.settings.llm_provider
+        metrics_store.increment_llm_call(provider)
         if self.settings.llm_provider == "azure":
-            return await self._text_with_azure(system_prompt, user_prompt)
+            try:
+                return await self._text_with_azure(system_prompt, user_prompt)
+            except RuntimeError:
+                metrics_store.increment_llm_failure(provider)
+                raise
         if self.settings.llm_provider == "ollama":
-            return await self._text_with_ollama(system_prompt, user_prompt)
+            try:
+                return await self._text_with_ollama(system_prompt, user_prompt)
+            except RuntimeError:
+                metrics_store.increment_llm_failure(provider)
+                raise
         raise RuntimeError("Unsupported LLM provider. Use 'azure' or 'ollama'.")
 
     async def _text_with_azure(self, system_prompt: str, user_prompt: str) -> str:
@@ -165,9 +182,10 @@ class LLMService:
 
     @staticmethod
     def _build_user_prompt(anomaly: AnomalyResponse) -> str:
+        sanitized = LLMService._sanitize_payload(anomaly.model_dump())
         return (
             "Analyze this flagged ledger transaction and provide concise audit guidance.\n"
-            f"Transaction JSON: {json.dumps(anomaly.model_dump(), ensure_ascii=True)}"
+            f"Transaction JSON: {json.dumps(sanitized, ensure_ascii=True)}"
         )
 
     @staticmethod
@@ -195,6 +213,21 @@ class LLMService:
             "possible_cause": str(payload.get("possible_cause", "Unknown")),
             "recommended_action": str(payload.get("recommended_action", "Review transaction and supporting documents.")),
         }
+
+    @staticmethod
+    def _sanitize_payload(payload: dict[str, Any]) -> dict[str, Any]:
+        sensitive_tokens = {"email", "phone", "ssn", "tax", "iban", "swift", "account_number", "bank_account"}
+
+        def _sanitize(value: Any, key: str | None = None) -> Any:
+            if key and any(token in key.lower() for token in sensitive_tokens):
+                return "[REDACTED]"
+            if isinstance(value, dict):
+                return {k: _sanitize(v, k) for k, v in value.items()}
+            if isinstance(value, list):
+                return [_sanitize(item, key) for item in value]
+            return value
+
+        return _sanitize(payload)
 
 
 def get_llm_service() -> LLMService:
