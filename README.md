@@ -75,6 +75,20 @@ copy .env.template .env
 uvicorn backend.main:app --reload --port 8000
 ```
 
+## Quality Commands (v1.1)
+
+Run these before pushing:
+
+```bash
+python -m ruff check .
+python -m ruff format --check .
+python -m pytest
+```
+
+Notes:
+- `pytest` enforces coverage for `backend/` with `--cov-fail-under=80` (configured in `pyproject.toml`).
+- CI runs the same lint, format, and test gates on pull requests.
+
 ## Environment Configuration
 
 Configure `.env` with the following keys:
@@ -135,28 +149,34 @@ API_KEY=
 gunicorn -k uvicorn.workers.UvicornWorker backend.main:app
 ```
 
-## Next Part: Production Readiness
+## Next Part: Production Hardening
 
-### Testing Strategy
+### CI and Quality Gates
 
-- Implemented `tests/test_anomaly_service.py` for anomaly filtering and transaction lookup behavior.
-- Implemented `tests/test_api.py` for `/explain` validation, auth guard behavior, and `/metrics` assertions.
-- Implemented `tests/test_llm_service.py` to verify sensitive prompt-field redaction.
+- Run unit and API tests in CI on every pull request.
+- Enforce linting and formatting checks before merge.
+- Fail builds when coverage drops below agreed thresholds.
 
-### Observability
+### Runtime Reliability
 
-- Added `ObservabilityMiddleware` with request IDs and JSON structured request logs.
-- Added in-memory endpoint metrics for request count, error count, and average latency.
-- Added LLM provider telemetry counters: total calls, retries, and failures.
+- Add request timeouts and circuit-breaker behavior for external LLM calls.
+- Introduce background job processing for long-running report generation.
+- Add dataset pagination limits to protect memory and response times.
 
-### Security and Compliance
+### Observability and Ops
 
-- Added optional API-key authentication (`x-api-key`) for non-health routes.
-- Added sensitive-field redaction before LLM explain prompts are constructed.
-- Request IDs are returned to clients for traceability in logs.
+- Export metrics to Prometheus/OpenTelemetry instead of in-memory only.
+- Add dashboard panels for endpoint latency, error rates, and LLM retry spikes.
+- Set alert policies for elevated 5xx rates and provider failure bursts.
 
-### Roadmap
+### Security and Governance
 
-- Support larger datasets via pagination and async processing.
-- Add configurable risk-scoring thresholds by account/category.
-- Add report export formats (PDF/CSV) for audit handoff workflows.
+- Rotate API keys via secret manager integration.
+- Add role-based access control for report and anomaly endpoints.
+- Add immutable audit logs for explanation and report generation events.
+
+### Delivery Roadmap
+
+- v1.1: CI pipeline + test/coverage gates + lint checks. (Implemented)
+- v1.2: External metrics export + alerting + dashboard templates.
+- v1.3: Async report jobs + pagination + stronger auth model.
