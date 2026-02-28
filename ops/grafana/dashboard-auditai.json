@@ -1,0 +1,53 @@
+{
+  "title": "AuditAI Backend Overview",
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "panels": [
+    {
+      "type": "timeseries",
+      "title": "Request Rate (req/s)",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "targets": [
+        {
+          "expr": "sum(rate(auditai_http_requests_total[5m]))",
+          "legendFormat": "total"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Error Rate (%)",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "targets": [
+        {
+          "expr": "100 * sum(rate(auditai_http_errors_total[5m])) / clamp_min(sum(rate(auditai_http_requests_total[5m])), 1)",
+          "legendFormat": "error_pct"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Avg Latency (ms)",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "targets": [
+        {
+          "expr": "avg(auditai_http_latency_ms_avg)",
+          "legendFormat": "avg_latency_ms"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "LLM Failures (per sec)",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "targets": [
+        {
+          "expr": "sum(rate(auditai_llm_failures_total[5m])) by (provider)",
+          "legendFormat": "{{provider}}"
+        }
+      ]
+    }
+  ]
+}

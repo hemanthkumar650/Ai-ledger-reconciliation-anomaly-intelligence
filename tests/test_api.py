@@ -115,3 +115,20 @@ def test_metrics_endpoint_returns_request_counters(monkeypatch):
     body = metrics.json()
     assert "requests" in body
     assert body["requests"]["GET /health"]["count"] >= 1
+
+
+def test_prometheus_metrics_endpoint_returns_exposition(monkeypatch):
+    metrics_store.reset()
+    monkeypatch.delenv("API_KEY", raising=False)
+    get_settings.cache_clear()
+
+    app = create_app()
+    client = TestClient(app)
+
+    client.get("/health")
+    response = client.get("/metrics/prometheus")
+
+    assert response.status_code == 200
+    assert "text/plain" in response.headers["content-type"]
+    assert "auditai_http_requests_total" in response.text
+    assert "method=\"GET\",path=\"/health\"" in response.text

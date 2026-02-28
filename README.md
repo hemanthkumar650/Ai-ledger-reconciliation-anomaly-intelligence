@@ -32,6 +32,9 @@ Returns service status and active LLM provider.
 ### `GET /metrics`
 Returns in-memory request/latency/error counters and LLM call/retry/failure telemetry.
 
+### `GET /metrics/prometheus`
+Returns Prometheus text exposition format for production scraping.
+
 ### `GET /anomalies`
 Returns all flagged transactions from the dataset.
 
@@ -149,6 +152,12 @@ API_KEY=
 gunicorn -k uvicorn.workers.UvicornWorker backend.main:app
 ```
 
+## Observability Ops Templates (v1.2)
+
+- Prometheus alerts: `ops/prometheus/alerts.yml`
+- Grafana dashboard template: `ops/grafana/dashboard-auditai.json`
+- Prometheus scrape target endpoint: `/metrics/prometheus`
+
 ## Next Part: Production Hardening
 
 ### CI and Quality Gates
@@ -165,9 +174,9 @@ gunicorn -k uvicorn.workers.UvicornWorker backend.main:app
 
 ### Observability and Ops
 
-- Export metrics to Prometheus/OpenTelemetry instead of in-memory only.
-- Add dashboard panels for endpoint latency, error rates, and LLM retry spikes.
-- Set alert policies for elevated 5xx rates and provider failure bursts.
+- Export metrics to Prometheus text exposition (`/metrics/prometheus`). (Implemented)
+- Add dashboard panels for endpoint latency, error rates, and LLM failures (`ops/grafana/dashboard-auditai.json`). (Implemented)
+- Add alert rule templates for elevated 5xx rates and LLM failure bursts (`ops/prometheus/alerts.yml`). (Implemented)
 
 ### Security and Governance
 
@@ -178,5 +187,5 @@ gunicorn -k uvicorn.workers.UvicornWorker backend.main:app
 ### Delivery Roadmap
 
 - v1.1: CI pipeline + test/coverage gates + lint checks. (Implemented)
-- v1.2: External metrics export + alerting + dashboard templates.
+- v1.2: External metrics export + alerting + dashboard templates. (Implemented)
 - v1.3: Async report jobs + pagination + stronger auth model.
