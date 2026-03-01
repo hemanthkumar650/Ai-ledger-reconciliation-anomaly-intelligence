@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from backend.models.schemas import AnomalyListResponse, AnomalyResponse
 from backend.services.anomaly_service import AnomalyService, get_anomaly_service
@@ -7,9 +7,14 @@ router = APIRouter()
 
 
 @router.get("/anomalies", response_model=AnomalyListResponse)
-async def list_anomalies(service: AnomalyService = Depends(get_anomaly_service)) -> AnomalyListResponse:
+async def list_anomalies(
+    offset: int = Query(default=0, ge=0, le=100000),
+    limit: int = Query(default=100, ge=1, le=500),
+    service: AnomalyService = Depends(get_anomaly_service),
+) -> AnomalyListResponse:
     anomalies = await service.list_anomalies()
-    return AnomalyListResponse(total=len(anomalies), items=anomalies)
+    paged = anomalies[offset : offset + limit]
+    return AnomalyListResponse(total=len(anomalies), offset=offset, limit=limit, items=paged)
 
 
 @router.get("/anomaly/{transaction_id}", response_model=AnomalyResponse)

@@ -14,6 +14,8 @@ class AnomalyResponse(BaseModel):
 
 class AnomalyListResponse(BaseModel):
     total: int
+    offset: int = 0
+    limit: int = 100
     items: list[AnomalyResponse]
 
 
@@ -40,6 +42,20 @@ class AuditReportResponse(BaseModel):
     high_risk: int
     medium_risk: int
     low_risk: int
+
+
+class AuditReportJobResponse(BaseModel):
+    job_id: str
+    status: str
+
+
+class AuditReportJobStatusResponse(BaseModel):
+    job_id: str
+    status: str
+    created_at: str
+    updated_at: str
+    result: AuditReportResponse | None = None
+    error: str | None = None
 
 
 class ChatRequest(BaseModel):

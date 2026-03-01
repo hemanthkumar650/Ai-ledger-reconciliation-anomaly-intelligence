@@ -33,10 +33,13 @@ Returns service status and active LLM provider.
 Returns in-memory request/latency/error counters and LLM call/retry/failure telemetry.
 
 ### `GET /metrics/prometheus`
-Returns Prometheus text exposition format for production scraping.
+Returns Prometheus text exposition format for scraping.
 
 ### `GET /anomalies`
 Returns all flagged transactions from the dataset.
+Supports pagination with query params:
+- `offset` (default `0`)
+- `limit` (default `100`, max `500`)
 
 ### `GET /anomaly/{transaction_id}`
 Returns one transaction by ID.
@@ -54,6 +57,12 @@ Validation included:
 
 ### `POST /audit-report`
 Builds a concise audit summary and returns risk distribution counts.
+
+### `POST /audit-report/jobs`
+Creates an async audit report job and returns `202 Accepted` with `job_id`.
+
+### `GET /audit-report/jobs/{job_id}`
+Returns async audit report job status and result when complete.
 
 ### `POST /chat`
 Answers audit questions using ledger transaction context.
@@ -78,9 +87,7 @@ copy .env.template .env
 uvicorn backend.main:app --reload --port 8000
 ```
 
-## Quality Commands (v1.1)
-
-Run these before pushing:
+## Quality Commands
 
 ```bash
 python -m ruff check .
@@ -88,9 +95,7 @@ python -m ruff format --check .
 python -m pytest
 ```
 
-Notes:
-- `pytest` enforces coverage for `backend/` with `--cov-fail-under=80` (configured in `pyproject.toml`).
-- CI runs the same lint, format, and test gates on pull requests.
+Coverage gate is configured in `pyproject.toml` (`--cov-fail-under=80`).
 
 ## Environment Configuration
 
@@ -114,6 +119,10 @@ OLLAMA_MODEL=llama3.1
 
 # optional; if set, non-health routes require x-api-key header
 API_KEY=
+
+# optional RBAC map; takes precedence over API_KEY
+# API_KEYS={"auditor-key":"auditor","admin-key":"admin"}
+API_KEYS={}
 ```
 
 ## Quick API Examples
@@ -143,6 +152,14 @@ API_KEY=
 }
 ```
 
+### Create async audit report job
+
+```json
+{
+  "max_transactions": 100
+}
+```
+
 ## Deployment Notes
 
 - Backend is deployment-ready for Azure App Service.
@@ -152,40 +169,33 @@ API_KEY=
 gunicorn -k uvicorn.workers.UvicornWorker backend.main:app
 ```
 
-## Observability Ops Templates (v1.2)
+## Production Readiness
 
-- Prometheus alerts: `ops/prometheus/alerts.yml`
-- Grafana dashboard template: `ops/grafana/dashboard-auditai.json`
-- Prometheus scrape target endpoint: `/metrics/prometheus`
+### Testing Strategy
 
-## Next Part: Production Hardening
+- Implemented `tests/test_anomaly_service.py` for anomaly filtering and transaction lookup behavior.
+- Implemented `tests/test_api.py` for `/explain` validation, auth guard behavior, and `/metrics` assertions.
+- Implemented `tests/test_llm_service.py` to verify sensitive prompt-field redaction.
 
-### CI and Quality Gates
+### Observability
 
-- Run unit and API tests in CI on every pull request.
-- Enforce linting and formatting checks before merge.
-- Fail builds when coverage drops below agreed thresholds.
+- Added `ObservabilityMiddleware` with request IDs and JSON structured request logs.
+- Added in-memory endpoint metrics for request count, error count, and average latency.
+- Added LLM provider telemetry counters: total calls, retries, and failures.
+- Added Prometheus scrape endpoint: `/metrics/prometheus`.
+- Added ops templates:
+  - `ops/prometheus/alerts.yml`
+  - `ops/grafana/dashboard-auditai.json`
 
-### Runtime Reliability
+### Security and Compliance
 
-- Add request timeouts and circuit-breaker behavior for external LLM calls.
-- Introduce background job processing for long-running report generation.
-- Add dataset pagination limits to protect memory and response times.
+- Added optional API-key authentication (`x-api-key`) for non-health routes.
+- Added role-based API key support with `API_KEYS` (`auditor` / `admin`).
+- Added sensitive-field redaction before LLM explain prompts are constructed.
+- Request IDs are returned to clients for traceability in logs.
 
-### Observability and Ops
+### Roadmap
 
-- Export metrics to Prometheus text exposition (`/metrics/prometheus`). (Implemented)
-- Add dashboard panels for endpoint latency, error rates, and LLM failures (`ops/grafana/dashboard-auditai.json`). (Implemented)
-- Add alert rule templates for elevated 5xx rates and LLM failure bursts (`ops/prometheus/alerts.yml`). (Implemented)
-
-### Security and Governance
-
-- Rotate API keys via secret manager integration.
-- Add role-based access control for report and anomaly endpoints.
-- Add immutable audit logs for explanation and report generation events.
-
-### Delivery Roadmap
-
-- v1.1: CI pipeline + test/coverage gates + lint checks. (Implemented)
-- v1.2: External metrics export + alerting + dashboard templates. (Implemented)
-- v1.3: Async report jobs + pagination + stronger auth model.
+- Support larger datasets via pagination and async processing. (Implemented)
+- Add configurable risk-scoring thresholds by account/category.
+- Add report export formats (PDF/CSV) for audit handoff workflows.

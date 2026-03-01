@@ -88,6 +88,7 @@ def test_explain_requires_transaction_input():
 def test_api_key_enforced_when_configured(monkeypatch):
     metrics_store.reset()
     monkeypatch.setenv("API_KEY", "secret-key")
+    monkeypatch.delenv("API_KEYS", raising=False)
     get_settings.cache_clear()
 
     app = create_app()
@@ -98,6 +99,22 @@ def test_api_key_enforced_when_configured(monkeypatch):
 
     assert unauthorized.status_code == 401
     assert authorized.status_code == 200
+
+
+def test_role_based_access_enforced_with_api_keys(monkeypatch):
+    metrics_store.reset()
+    monkeypatch.setenv("API_KEYS", '{"auditor-key":"auditor","admin-key":"admin"}')
+    monkeypatch.delenv("API_KEY", raising=False)
+    get_settings.cache_clear()
+
+    app = create_app()
+    client = TestClient(app)
+
+    auditor_report = client.post("/audit-report", headers={"x-api-key": "auditor-key"}, json={"max_transactions": 5})
+    admin_report = client.post("/audit-report", headers={"x-api-key": "admin-key"}, json={"max_transactions": 5})
+
+    assert auditor_report.status_code == 403
+    assert admin_report.status_code in (200, 502)
 
 
 def test_metrics_endpoint_returns_request_counters(monkeypatch):
@@ -132,3 +149,45 @@ def test_prometheus_metrics_endpoint_returns_exposition(monkeypatch):
     assert "text/plain" in response.headers["content-type"]
     assert "auditai_http_requests_total" in response.text
     assert "method=\"GET\",path=\"/health\"" in response.text
+
+
+def test_anomalies_support_pagination_query_params(monkeypatch):
+    metrics_store.reset()
+    monkeypatch.delenv("API_KEY", raising=False)
+    monkeypatch.delenv("API_KEYS", raising=False)
+    get_settings.cache_clear()
+
+    app = create_app()
+    app.dependency_overrides[get_anomaly_service] = lambda: StubAnomalyService()
+    app.dependency_overrides[get_llm_service] = lambda: StubLLMService()
+    client = TestClient(app)
+
+    response = client.get("/anomalies?offset=0&limit=1")
+    body = response.json()
+    assert response.status_code == 200
+    assert body["offset"] == 0
+    assert body["limit"] == 1
+    assert body["total"] == 1
+    assert len(body["items"]) == 1
+
+
+def test_audit_report_job_endpoints(monkeypatch):
+    metrics_store.reset()
+    monkeypatch.delenv("API_KEY", raising=False)
+    monkeypatch.setenv("API_KEYS", '{"admin-key":"admin"}')
+    get_settings.cache_clear()
+
+    app = create_app()
+    app.dependency_overrides[get_anomaly_service] = lambda: StubAnomalyService()
+    app.dependency_overrides[get_llm_service] = lambda: StubLLMService()
+    client = TestClient(app)
+
+    create_resp = client.post("/audit-report/jobs", headers={"x-api-key": "admin-key"}, json={"max_transactions": 10})
+    assert create_resp.status_code == 202
+    payload = create_resp.json()
+    assert payload["job_id"]
+
+    status_resp = client.get(f"/audit-report/jobs/{payload['job_id']}", headers={"x-api-key": "admin-key"})
+    assert status_resp.status_code == 200
+    status_body = status_resp.json()
+    assert status_body["status"] in {"pending", "running", "completed"}

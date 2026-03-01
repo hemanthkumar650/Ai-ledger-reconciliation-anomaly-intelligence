@@ -22,6 +22,7 @@ class Settings(BaseSettings):
     ollama_model: str = "llama3.1"
 
     api_key: str = ""
+    api_keys: dict[str, str] = {}
 
 
 @lru_cache
