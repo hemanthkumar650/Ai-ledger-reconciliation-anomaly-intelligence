@@ -1,7 +1,12 @@
 # AuditAI
 
-## 1) What and Why
-AuditAI is a FastAPI backend that detects anomalous ledger transactions and explains audit risk with LLM-generated reasoning so auditors can move from raw flags to actionable decisions faster.
+## 1) Problem and Solution
+Audit teams spend too much time manually reviewing large ledgers, and most flagged anomalies lack clear, consistent reasoning for fast decision-making.
+AuditAI is a FastAPI backend that detects anomalous ledger transactions and explains audit risk with LLM-generated reasoning so auditors can move from raw flags to actionable decisions faster.  
+It combines deterministic anomaly filtering with contextual AI explanations to reduce manual triage effort and improve consistency in first-pass audit reviews.  
+The platform is designed for teams that need API-first integration into existing finance workflows, not a standalone dashboard.  
+By exposing health, anomaly retrieval, explanation, report generation, chat, and metrics endpoints, it supports both analyst productivity and operational observability in one service.  
+The core goal is to shorten investigation time per flagged transaction while preserving traceability, reproducibility, and deployment readiness for production environments.
 
 ## 2) Architecture Diagram (Mermaid.js)
 ```mermaid
@@ -13,7 +18,7 @@ flowchart LR
     L --> AZ[Azure OpenAI]
     L --> OL[Ollama Fallback]
     API --> M[Observability Middleware]
-    M --> MET[/metrics + /metrics/prometheus]
+    M --> MET["/metrics and /metrics/prometheus"]
     API --> J[Async Report Job Service]
 ```
 
