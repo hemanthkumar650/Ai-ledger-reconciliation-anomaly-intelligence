@@ -23,6 +23,10 @@ class Settings(BaseSettings):
 
     api_key: str = ""
     api_keys: dict[str, str] = {}
+    risk_score_by_account: dict[str, float] = {}
+    risk_score_by_category: dict[str, float] = {}
+    risk_level_high_cutoff: float = 0.85
+    risk_level_medium_cutoff: float = 0.6
 
 
 @lru_cache
