@@ -42,3 +42,19 @@ flowchart LR
 - Added dual LLM providers (Azure primary, Ollama fallback) to reduce deployment coupling.
 - Added observability middleware plus Prometheus exposition for production monitoring and alerting.
 - Implemented role-based API keys and async report jobs to support safer multi-user usage and non-blocking report generation.
+
+## 5) Run an End-to-End API Flow
+1. Start the API:
+   ```powershell
+   uvicorn backend.main:app --reload
+   ```
+2. In a second terminal, run the client flow script:
+   ```powershell
+   python ops/demo_flow.py --base-url http://127.0.0.1:8000
+   ```
+3. If API key auth is enabled, pass it:
+   ```powershell
+   python ops/demo_flow.py --base-url http://127.0.0.1:8000 --api-key <your-key>
+   ```
+
+The script exercises `GET /health`, `GET /anomalies`, `POST /explain`, `POST /chat`, `POST /audit-report/jobs`, and `GET /audit-report/jobs/{job_id}`.

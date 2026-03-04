@@ -50,6 +50,14 @@ class StubLLMService:
         return "Answer"
 
 
+class StubLLMErrorService(StubLLMService):
+    async def explain_anomaly(self, anomaly: AnomalyResponse):
+        raise RuntimeError("provider unavailable")
+
+    async def chat_with_ledger(self, question: str, anomalies, max_rows: int = 30):
+        raise RuntimeError("provider unavailable")
+
+
 def _build_client():
     get_settings.cache_clear()
     app = create_app()
@@ -191,3 +199,78 @@ def test_audit_report_job_endpoints(monkeypatch):
     assert status_resp.status_code == 200
     status_body = status_resp.json()
     assert status_body["status"] in {"pending", "running", "completed"}
+
+
+def test_get_anomaly_by_transaction_id_found():
+    client = _build_client()
+    response = client.get("/anomaly/T100")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["transaction_id"] == "T100"
+
+
+def test_get_anomaly_by_transaction_id_not_found():
+    client = _build_client()
+    response = client.get("/anomaly/T404")
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Transaction not found"
+
+
+def test_explain_by_transaction_id_success():
+    client = _build_client()
+    response = client.post("/explain", json={"transaction_id": "T100"})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["transaction_id"] == "T100"
+    assert body["risk_level"] == "High"
+
+
+def test_explain_transaction_not_found_for_transaction_id():
+    client = _build_client()
+    response = client.post("/explain", json={"transaction_id": "T999"})
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Transaction not found"
+
+
+def test_explain_returns_502_on_llm_runtime_error(monkeypatch):
+    metrics_store.reset()
+    monkeypatch.delenv("API_KEY", raising=False)
+    monkeypatch.delenv("API_KEYS", raising=False)
+    get_settings.cache_clear()
+
+    app = create_app()
+    app.dependency_overrides[get_anomaly_service] = lambda: StubAnomalyService()
+    app.dependency_overrides[get_llm_service] = lambda: StubLLMErrorService()
+    client = TestClient(app)
+
+    response = client.post("/explain", json={"transaction_id": "T100"})
+    assert response.status_code == 502
+    assert "LLM service error" in response.json()["detail"]
+
+
+def test_chat_success():
+    client = _build_client()
+    response = client.post("/chat", json={"question": "What is the top risk?"})
+
+    assert response.status_code == 200
+    assert response.json()["answer"] == "Answer"
+
+
+def test_chat_returns_502_on_llm_runtime_error(monkeypatch):
+    metrics_store.reset()
+    monkeypatch.delenv("API_KEY", raising=False)
+    monkeypatch.delenv("API_KEYS", raising=False)
+    get_settings.cache_clear()
+
+    app = create_app()
+    app.dependency_overrides[get_anomaly_service] = lambda: StubAnomalyService()
+    app.dependency_overrides[get_llm_service] = lambda: StubLLMErrorService()
+    client = TestClient(app)
+
+    response = client.post("/chat", json={"question": "Risk summary?"})
+    assert response.status_code == 502
+    assert "LLM service error" in response.json()["detail"]
