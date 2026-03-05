@@ -44,6 +44,12 @@ flowchart LR
 - Implemented role-based API keys and async report jobs to support safer multi-user usage and non-blocking report generation.
 
 ## 5) Run an End-to-End API Flow
+If you are running locally with Ollama, set a model you actually have installed (example uses `qwen2:0.5b`):
+```powershell
+$env:LLM_PROVIDER="ollama"
+$env:OLLAMA_MODEL="qwen2:0.5b"
+```
+
 1. Start the API:
    ```powershell
    uvicorn backend.main:app --reload

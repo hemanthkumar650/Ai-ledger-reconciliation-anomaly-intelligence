@@ -119,10 +119,13 @@ class LLMService:
             "stream": False,
         }
 
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            response = await client.post(f"{self.settings.ollama_base_url}/api/generate", json=payload)
-            response.raise_for_status()
-            data = response.json()
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                response = await client.post(f"{self.settings.ollama_base_url}/api/generate", json=payload)
+                response.raise_for_status()
+                data = response.json()
+        except httpx.HTTPError as exc:
+            raise RuntimeError(f"LLM API error: {exc}") from exc
 
         raw = data.get("response", "{}")
         parsed = json.loads(raw)
@@ -174,10 +177,13 @@ class LLMService:
             "stream": False,
         }
 
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            response = await client.post(f"{self.settings.ollama_base_url}/api/generate", json=payload)
-            response.raise_for_status()
-            data = response.json()
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                response = await client.post(f"{self.settings.ollama_base_url}/api/generate", json=payload)
+                response.raise_for_status()
+                data = response.json()
+        except httpx.HTTPError as exc:
+            raise RuntimeError(f"LLM API error: {exc}") from exc
         return str(data.get("response", "")).strip()
 
     @staticmethod

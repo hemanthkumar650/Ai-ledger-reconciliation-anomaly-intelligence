@@ -2,6 +2,7 @@ import logging
 
 from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+import httpx
 
 from backend.middleware.observability import ObservabilityMiddleware
 from backend.routes import anomalies, audit_report, chat, explain, health
@@ -27,6 +28,27 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
     app.add_middleware(ObservabilityMiddleware)
+
+    @app.on_event("startup")
+    async def validate_llm_config() -> None:
+        if settings.llm_provider != "ollama":
+            return
+
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                response = await client.get(f"{settings.ollama_base_url}/api/tags")
+                response.raise_for_status()
+                payload = response.json()
+        except httpx.HTTPError as exc:
+            raise RuntimeError(f"Ollama startup check failed: {exc}") from exc
+
+        models = payload.get("models", [])
+        installed = {str(item.get("name", "")).strip() for item in models if isinstance(item, dict)}
+        if settings.ollama_model not in installed:
+            available = ", ".join(sorted(name for name in installed if name)) or "none"
+            raise RuntimeError(
+                f"Ollama model '{settings.ollama_model}' is not installed. Available models: {available}"
+            )
 
     app.include_router(health.router, tags=["health"])
     app.include_router(
