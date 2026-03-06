@@ -1,6 +1,7 @@
 import asyncio
 
 import backend.services.llm_service as llm_module
+import httpx
 from backend.models.schemas import AnomalyResponse
 from backend.services.llm_service import LLMService
 from backend.utils.config import Settings
@@ -187,3 +188,60 @@ def test_text_completion_rejects_unsupported_provider():
         assert False, "Expected RuntimeError"
     except RuntimeError as exc:
         assert "Unsupported LLM provider" in str(exc)
+
+
+def test_explain_with_ollama_wraps_http_errors(monkeypatch):
+    service = LLMService(Settings(llm_provider="ollama"))
+    anomaly = AnomalyResponse(
+        transaction_id="X6",
+        amount=10.0,
+        account="4000",
+        anomaly_score=0.9,
+        risk_level="High",
+    )
+
+    class DummyAsyncClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def post(self, *args, **kwargs):
+            raise httpx.HTTPError("connection failed")
+
+    monkeypatch.setattr(llm_module.httpx, "AsyncClient", DummyAsyncClient)
+
+    try:
+        asyncio.run(service._explain_with_ollama(anomaly))
+        assert False, "Expected RuntimeError"
+    except RuntimeError as exc:
+        assert "LLM API error" in str(exc)
+
+
+def test_text_with_ollama_wraps_http_errors(monkeypatch):
+    service = LLMService(Settings(llm_provider="ollama"))
+
+    class DummyAsyncClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def post(self, *args, **kwargs):
+            raise httpx.HTTPError("connection failed")
+
+    monkeypatch.setattr(llm_module.httpx, "AsyncClient", DummyAsyncClient)
+
+    try:
+        asyncio.run(service._text_with_ollama("sys", "usr"))
+        assert False, "Expected RuntimeError"
+    except RuntimeError as exc:
+        assert "LLM API error" in str(exc)

@@ -1,5 +1,7 @@
+import pytest
 from fastapi.testclient import TestClient
 
+import backend.main as main_module
 from backend.main import create_app
 from backend.models.schemas import AnomalyResponse
 from backend.services.anomaly_service import get_anomaly_service
@@ -274,3 +276,67 @@ def test_chat_returns_502_on_llm_runtime_error(monkeypatch):
     response = client.post("/chat", json={"question": "Risk summary?"})
     assert response.status_code == 502
     assert "LLM service error" in response.json()["detail"]
+
+
+def test_startup_ollama_model_check_passes_when_model_installed(monkeypatch):
+    class _FakeResponse:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"models": [{"name": "qwen2:0.5b"}]}
+
+    class _FakeAsyncClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def get(self, *_args, **_kwargs):
+            return _FakeResponse()
+
+    monkeypatch.setenv("LLM_PROVIDER", "ollama")
+    monkeypatch.setenv("OLLAMA_MODEL", "qwen2:0.5b")
+    get_settings.cache_clear()
+    monkeypatch.setattr(main_module.httpx, "AsyncClient", _FakeAsyncClient)
+
+    app = create_app()
+    client = TestClient(app)
+    response = client.get("/health")
+    assert response.status_code == 200
+
+
+def test_startup_ollama_model_check_fails_when_model_missing(monkeypatch):
+    class _FakeResponse:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"models": [{"name": "qwen2:0.5b"}]}
+
+    class _FakeAsyncClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def get(self, *_args, **_kwargs):
+            return _FakeResponse()
+
+    monkeypatch.setenv("LLM_PROVIDER", "ollama")
+    monkeypatch.setenv("OLLAMA_MODEL", "llama3.1")
+    get_settings.cache_clear()
+    monkeypatch.setattr(main_module.httpx, "AsyncClient", _FakeAsyncClient)
+
+    app = create_app()
+    with pytest.raises(RuntimeError, match="is not installed"):
+        with TestClient(app):
+            pass
