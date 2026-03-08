@@ -2,6 +2,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 import backend.main as main_module
+import backend.routes.health as health_module
 from backend.main import create_app
 from backend.models.schemas import AnomalyResponse
 from backend.services.anomaly_service import get_anomaly_service
@@ -159,6 +160,63 @@ def test_prometheus_metrics_endpoint_returns_exposition(monkeypatch):
     assert "text/plain" in response.headers["content-type"]
     assert "auditai_http_requests_total" in response.text
     assert "method=\"GET\",path=\"/health\"" in response.text
+
+
+def test_ready_endpoint_reports_not_ready_for_missing_azure_config(monkeypatch):
+    monkeypatch.setenv("LLM_PROVIDER", "azure")
+    monkeypatch.delenv("AZURE_OPENAI_ENDPOINT", raising=False)
+    monkeypatch.delenv("AZURE_OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("AZURE_OPENAI_DEPLOYMENT", raising=False)
+    get_settings.cache_clear()
+
+    app = create_app()
+    client = TestClient(app)
+
+    response = client.get("/ready")
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "not_ready"
+    assert payload["checks"]["dataset"]["ok"] is True
+    assert payload["checks"]["llm"]["ok"] is False
+    assert "Missing config" in payload["checks"]["llm"]["detail"]
+
+
+def test_ready_endpoint_reports_ready_for_installed_ollama_model(monkeypatch):
+    class _FakeResponse:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"models": [{"name": "qwen2:0.5b"}]}
+
+    class _FakeAsyncClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def get(self, *_args, **_kwargs):
+            return _FakeResponse()
+
+    monkeypatch.setenv("LLM_PROVIDER", "ollama")
+    monkeypatch.setenv("OLLAMA_MODEL", "qwen2:0.5b")
+    get_settings.cache_clear()
+    monkeypatch.setattr(main_module.httpx, "AsyncClient", _FakeAsyncClient)
+    monkeypatch.setattr(health_module.httpx, "AsyncClient", _FakeAsyncClient)
+
+    app = create_app()
+    client = TestClient(app)
+    response = client.get("/ready")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "ready"
+    assert payload["checks"]["dataset"]["ok"] is True
+    assert payload["checks"]["llm"]["ok"] is True
 
 
 def test_anomalies_support_pagination_query_params(monkeypatch):

@@ -64,3 +64,9 @@ $env:OLLAMA_MODEL="qwen2:0.5b"
    ```
 
 The script exercises `GET /health`, `GET /anomalies`, `POST /explain`, `POST /chat`, `POST /audit-report/jobs`, and `GET /audit-report/jobs/{job_id}`.
+
+Readiness check:
+```powershell
+curl http://127.0.0.1:8000/ready
+```
+`/ready` reports `ready` or `not_ready` based on dataset availability and LLM provider configuration (including Ollama model availability).
