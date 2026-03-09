@@ -50,15 +50,19 @@ $env:LLM_PROVIDER="ollama"
 $env:OLLAMA_MODEL="qwen2:0.5b"
 ```
 
-1. Start the API:
+1. Run preflight checks:
+   ```powershell
+   python ops/check_env.py
+   ```
+2. Start the API:
    ```powershell
    uvicorn backend.main:app --reload
    ```
-2. In a second terminal, run the client flow script:
+3. In a second terminal, run the client flow script:
    ```powershell
    python ops/demo_flow.py --base-url http://127.0.0.1:8000
    ```
-3. If API key auth is enabled, pass it:
+4. If API key auth is enabled, pass it:
    ```powershell
    python ops/demo_flow.py --base-url http://127.0.0.1:8000 --api-key <your-key>
    ```
