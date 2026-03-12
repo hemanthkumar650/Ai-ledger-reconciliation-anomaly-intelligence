@@ -65,3 +65,39 @@ class ChatRequest(BaseModel):
 
 class ChatResponse(BaseModel):
     answer: str
+
+
+# Reconciliation Models
+class AccountBalance(BaseModel):
+    account: str
+    local_balance: float
+    doc_balance: float
+    transaction_count: int
+    currency: str
+    variance: float = 0.0
+
+
+class ReconciliationIssue(BaseModel):
+    issue_type: str
+    severity: str  # "High", "Medium", "Low"
+    account: str | None = None
+    description: str
+    amount: float | None = None
+    transaction_ids: list[str] = Field(default_factory=list)
+
+
+class ReconciliationSummary(BaseModel):
+    total_accounts: int
+    balanced_accounts: int
+    unbalanced_accounts: int
+    total_variance: float
+    issues: list[ReconciliationIssue]
+    completion_percentage: float
+    last_reconciled: str
+
+
+class ReconciliationRequest(BaseModel):
+    account_filter: str | None = None
+    currency_filter: str | None = None
+    variance_threshold: float = Field(default=0.01, ge=0.0)
+    include_balanced: bool = Field(default=True)

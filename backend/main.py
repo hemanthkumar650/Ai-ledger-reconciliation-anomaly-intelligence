@@ -6,7 +6,7 @@ import httpx
 from fastapi.middleware.cors import CORSMiddleware
 
 from backend.middleware.observability import ObservabilityMiddleware
-from backend.routes import anomalies, audit_report, chat, explain, health
+from backend.routes import anomalies, audit_report, chat, explain, health, reconciliation
 from backend.routes.dependencies import require_role
 from backend.utils.config import get_settings
 
@@ -78,6 +78,11 @@ def create_app() -> FastAPI:
     app.include_router(
         chat.router,
         tags=["chat"],
+        dependencies=[Depends(require_role("auditor", "admin"))],
+    )
+    app.include_router(
+        reconciliation.router,
+        tags=["reconciliation"],
         dependencies=[Depends(require_role("auditor", "admin"))],
     )
 

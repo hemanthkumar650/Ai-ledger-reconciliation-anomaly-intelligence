@@ -7,6 +7,7 @@ from backend.main import create_app
 from backend.models.schemas import AnomalyResponse
 from backend.services.anomaly_service import get_anomaly_service
 from backend.services.llm_service import get_llm_service
+from backend.services.reconciliation_service import get_reconciliation_service
 from backend.utils.config import get_settings
 from backend.utils.metrics import metrics_store
 
@@ -61,11 +62,69 @@ class StubLLMErrorService(StubLLMService):
         raise RuntimeError("provider unavailable")
 
 
+class StubReconciliationService:
+    async def get_summary(self, request=None):
+        return {
+            "total_accounts": 3,
+            "balanced_accounts": 2,
+            "unbalanced_accounts": 1,
+            "total_variance": 150.50,
+            "issues": [
+                {
+                    "issue_type": "balance_variance",
+                    "severity": "Medium",
+                    "account": "A001",
+                    "description": "Currency balance variance of 150.50 detected",
+                    "amount": 150.50,
+                    "transaction_ids": []
+                }
+            ],
+            "completion_percentage": 66.67,
+            "last_reconciled": "2026-03-12T10:30:00"
+        }
+    
+    async def get_account_balances(self, request=None):
+        return [
+            {
+                "account": "A001",
+                "local_balance": 1000.0,
+                "doc_balance": 850.0,
+                "transaction_count": 5,
+                "currency": "USD",
+                "variance": 150.0
+            },
+            {
+                "account": "A002", 
+                "local_balance": 500.0,
+                "doc_balance": 500.0,
+                "transaction_count": 3,
+                "currency": "EUR",
+                "variance": 0.0
+            }
+        ]
+    
+    async def validate_account_integrity(self, account: str):
+        if account == "A001":
+            return {
+                "status": "ok",
+                "account": "A001",
+                "transaction_count": 5,
+                "duplicate_documents": 0,
+                "posting_key_variety": 2,
+                "local_currency_total": 1000.0,
+                "document_currency_total": 850.0,
+                "balance_variance": 150.0,
+                "currencies_used": ["USD"]
+            }
+        return {"status": "error", "message": f"Account {account} not found"}
+
+
 def _build_client():
     get_settings.cache_clear()
     app = create_app()
     app.dependency_overrides[get_anomaly_service] = lambda: StubAnomalyService()
     app.dependency_overrides[get_llm_service] = lambda: StubLLMService()
+    app.dependency_overrides[get_reconciliation_service] = lambda: StubReconciliationService()
     return TestClient(app)
 
 
@@ -398,3 +457,96 @@ def test_startup_ollama_model_check_fails_when_model_missing(monkeypatch):
     with pytest.raises(RuntimeError, match="is not installed"):
         with TestClient(app):
             pass
+
+
+# Reconciliation API Tests  
+def test_reconciliation_summary_success():
+    client = _build_client()
+    response = client.get("/reconciliation/summary", headers={"x-api-key": "admin"})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["total_accounts"] == 3
+    assert body["balanced_accounts"] == 2
+    assert body["unbalanced_accounts"] == 1
+    assert body["total_variance"] == 150.50
+    assert len(body["issues"]) == 1
+    assert body["completion_percentage"] == 66.67
+    assert body["last_reconciled"]
+
+
+def test_reconciliation_summary_with_filters():
+    client = _build_client()
+    response = client.get(
+        "/reconciliation/summary?currency_filter=USD&variance_threshold=100.0&include_balanced=false",
+        headers={"x-api-key": "auditor"}
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert "total_accounts" in body
+    assert "issues" in body
+
+
+def test_reconciliation_balances_success():
+    client = _build_client()
+    response = client.get("/reconciliation/balances", headers={"x-api-key": "auditor"})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert isinstance(body, list)
+    assert len(body) == 2
+    
+    # Check first balance entry
+    balance = body[0]
+    assert balance["account"] == "A001"
+    assert balance["local_balance"] == 1000.0
+    assert balance["doc_balance"] == 850.0
+    assert balance["transaction_count"] == 5
+    assert balance["currency"] == "USD"
+    assert balance["variance"] == 150.0
+
+
+def test_reconciliation_balances_with_filters():
+    client = _build_client()
+    response = client.get(
+        "/reconciliation/balances?account_filter=A001&currency_filter=USD",
+        headers={"x-api-key": "auditor"}
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert isinstance(body, list)
+
+
+def test_reconciliation_account_integrity_success():
+    client = _build_client()
+    response = client.get("/reconciliation/account/A001", headers={"x-api-key": "auditor"})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "ok"
+    assert body["account"] == "A001"
+    assert body["transaction_count"] == 5
+    assert body["duplicate_documents"] == 0
+    assert body["posting_key_variety"] == 2
+    assert body["local_currency_total"] == 1000.0
+    assert body["document_currency_total"] == 850.0
+    assert body["balance_variance"] == 150.0
+    assert "USD" in body["currencies_used"]
+
+
+def test_reconciliation_account_integrity_not_found():
+    client = _build_client()
+    response = client.get("/reconciliation/account/NONEXISTENT", headers={"x-api-key": "auditor"})
+
+    assert response.status_code == 404
+    assert "not found" in response.json()["detail"].lower()
+
+
+def test_reconciliation_account_integrity_empty_account():
+    client = _build_client()
+    response = client.get("/reconciliation/account/   ", headers={"x-api-key": "auditor"})  # Empty/whitespace account
+
+    assert response.status_code == 400
+    assert "cannot be empty" in response.json()["detail"]
