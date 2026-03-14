@@ -4,6 +4,7 @@ import asyncio
 from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 import pandas as pd
 
@@ -54,7 +55,7 @@ class ReconciliationService:
         rows = await asyncio.to_thread(self._load_ledger_data)
         return await asyncio.to_thread(self._calculate_account_balances, rows, request)
 
-    async def validate_account_integrity(self, account: str) -> dict[str, any]:
+    async def validate_account_integrity(self, account: str) -> dict[str, Any]:
         """Validate integrity of a specific account's transactions."""
         rows = await asyncio.to_thread(self._load_ledger_data)
         account_transactions = [row for row in rows if row.get('HKONT') == account]
@@ -82,7 +83,7 @@ class ReconciliationService:
             "local_currency_total": round(local_total, 2),
             "document_currency_total": round(doc_total, 2),
             "balance_variance": round(abs(local_total - doc_total), 2),
-            "currencies_used": list(set(tx.get('WAERS') for tx in account_transactions)),
+            "currencies_used": sorted({tx.get('WAERS') for tx in account_transactions}),
         }
 
     def _load_ledger_data(self) -> list[dict]:
