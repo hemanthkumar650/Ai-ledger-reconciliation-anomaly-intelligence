@@ -2,6 +2,12 @@ __pycache__/
 *.pyc
 .venv/
 .env
+.pytest_cache/
+.pytest_cache_local/
+pytest-cache-files-*/
+tests/.pytest_cache_local/
+tests/pytest-cache-files-*/
+.tmp/
 .coverage
 .coverage.*
 coverage.xml

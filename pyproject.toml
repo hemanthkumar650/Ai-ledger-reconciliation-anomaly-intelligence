@@ -1,6 +1,8 @@
 [tool.pytest.ini_options]
 addopts = "--cov=backend --cov-report=term-missing --cov-fail-under=80"
 testpaths = ["tests"]
+cache_dir = ".pytest_cache_local"
+norecursedirs = [".pytest_cache", ".pytest_cache_local", "pytest-cache-files-*", ".tmp", "__pycache__"]
 
 [tool.ruff]
 line-length = 100
