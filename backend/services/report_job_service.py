@@ -43,6 +43,10 @@ class ReportJobService:
         with self._lock:
             return self._jobs.get(job_id)
 
+    def reset(self) -> None:
+        with self._lock:
+            self._jobs.clear()
+
     def mark_running(self, job_id: str) -> None:
         with self._lock:
             job = self._jobs.get(job_id)

@@ -1,3 +1,6 @@
+import time
+
+import httpx
 import pytest
 from fastapi.testclient import TestClient
 
@@ -8,6 +11,7 @@ from backend.models.schemas import AnomalyResponse
 from backend.services.anomaly_service import get_anomaly_service
 from backend.services.llm_service import get_llm_service
 from backend.services.reconciliation_service import get_reconciliation_service
+from backend.services.report_job_service import report_job_service
 from backend.utils.config import get_settings
 from backend.utils.metrics import metrics_store
 
@@ -59,6 +63,11 @@ class StubLLMErrorService(StubLLMService):
         raise RuntimeError("provider unavailable")
 
     async def chat_with_ledger(self, question: str, anomalies, max_rows: int = 30):
+        raise RuntimeError("provider unavailable")
+
+
+class StubLLMReportErrorService(StubLLMService):
+    async def generate_audit_report(self, anomalies):
         raise RuntimeError("provider unavailable")
 
 
@@ -128,6 +137,21 @@ def _build_client():
     return TestClient(app)
 
 
+def _wait_for_job_terminal_state(
+    client: TestClient,
+    job_id: str,
+    headers: dict[str, str] | None = None,
+):
+    for _ in range(20):
+        response = client.get(f"/audit-report/jobs/{job_id}", headers=headers or {})
+        assert response.status_code == 200
+        if response.json()["status"] in {"completed", "failed"}:
+            return response
+        time.sleep(0.01)
+
+    pytest.fail(f"Job {job_id} did not reach a terminal state")
+
+
 def test_explain_rejects_mismatch_payload():
     client = _build_client()
     response = client.post(
@@ -180,8 +204,16 @@ def test_role_based_access_enforced_with_api_keys(monkeypatch):
     app = create_app()
     client = TestClient(app)
 
-    auditor_report = client.post("/audit-report", headers={"x-api-key": "auditor-key"}, json={"max_transactions": 5})
-    admin_report = client.post("/audit-report", headers={"x-api-key": "admin-key"}, json={"max_transactions": 5})
+    auditor_report = client.post(
+        "/audit-report",
+        headers={"x-api-key": "auditor-key"},
+        json={"max_transactions": 5},
+    )
+    admin_report = client.post(
+        "/audit-report",
+        headers={"x-api-key": "admin-key"},
+        json={"max_transactions": 5},
+    )
 
     assert auditor_report.status_code == 403
     assert admin_report.status_code in (200, 502)
@@ -278,6 +310,90 @@ def test_ready_endpoint_reports_ready_for_installed_ollama_model(monkeypatch):
     assert payload["checks"]["llm"]["ok"] is True
 
 
+def test_ready_endpoint_reports_not_ready_for_missing_ollama_config(monkeypatch):
+    monkeypatch.setenv("LLM_PROVIDER", "ollama")
+    monkeypatch.setenv("OLLAMA_BASE_URL", "")
+    monkeypatch.setenv("OLLAMA_MODEL", "")
+    get_settings.cache_clear()
+
+    app = create_app()
+    client = TestClient(app)
+
+    response = client.get("/ready")
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "not_ready"
+    assert payload["checks"]["llm"]["ok"] is False
+    assert payload["checks"]["llm"]["detail"] == "Missing OLLAMA_BASE_URL or OLLAMA_MODEL"
+
+
+def test_ready_endpoint_reports_not_ready_when_ollama_model_missing(monkeypatch):
+    class _FakeResponse:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"models": [{"name": "qwen2:0.5b"}]}
+
+    class _FakeAsyncClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def get(self, *_args, **_kwargs):
+            return _FakeResponse()
+
+    monkeypatch.setenv("LLM_PROVIDER", "ollama")
+    monkeypatch.setenv("OLLAMA_MODEL", "llama3.1")
+    get_settings.cache_clear()
+    monkeypatch.setattr(health_module.httpx, "AsyncClient", _FakeAsyncClient)
+
+    app = create_app()
+    client = TestClient(app)
+    response = client.get("/ready")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "not_ready"
+    assert payload["checks"]["llm"]["ok"] is False
+    assert "not installed" in payload["checks"]["llm"]["detail"]
+
+
+def test_ready_endpoint_reports_not_ready_when_ollama_check_fails(monkeypatch):
+    class _FailingAsyncClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def get(self, *_args, **_kwargs):
+            raise httpx.HTTPError("connection failed")
+
+    monkeypatch.setenv("LLM_PROVIDER", "ollama")
+    monkeypatch.setenv("OLLAMA_MODEL", "qwen2:0.5b")
+    get_settings.cache_clear()
+    monkeypatch.setattr(health_module.httpx, "AsyncClient", _FailingAsyncClient)
+
+    app = create_app()
+    client = TestClient(app)
+    response = client.get("/ready")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "not_ready"
+    assert payload["checks"]["llm"]["ok"] is False
+    assert "Ollama check failed" in payload["checks"]["llm"]["detail"]
+
+
 def test_anomalies_support_pagination_query_params(monkeypatch):
     metrics_store.reset()
     monkeypatch.delenv("API_KEY", raising=False)
@@ -300,6 +416,7 @@ def test_anomalies_support_pagination_query_params(monkeypatch):
 
 def test_audit_report_job_endpoints(monkeypatch):
     metrics_store.reset()
+    report_job_service.reset()
     monkeypatch.delenv("API_KEY", raising=False)
     monkeypatch.setenv("API_KEYS", '{"admin-key":"admin"}')
     get_settings.cache_clear()
@@ -309,15 +426,92 @@ def test_audit_report_job_endpoints(monkeypatch):
     app.dependency_overrides[get_llm_service] = lambda: StubLLMService()
     client = TestClient(app)
 
-    create_resp = client.post("/audit-report/jobs", headers={"x-api-key": "admin-key"}, json={"max_transactions": 10})
+    create_resp = client.post(
+        "/audit-report/jobs",
+        headers={"x-api-key": "admin-key"},
+        json={"max_transactions": 10},
+    )
     assert create_resp.status_code == 202
     payload = create_resp.json()
     assert payload["job_id"]
 
-    status_resp = client.get(f"/audit-report/jobs/{payload['job_id']}", headers={"x-api-key": "admin-key"})
+    status_resp = client.get(
+        f"/audit-report/jobs/{payload['job_id']}",
+        headers={"x-api-key": "admin-key"},
+    )
     assert status_resp.status_code == 200
     status_body = status_resp.json()
     assert status_body["status"] in {"pending", "running", "completed"}
+
+
+def test_generate_audit_report_success():
+    client = _build_client()
+    response = client.post("/audit-report", json={"max_transactions": 1})
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "summary": "Summary",
+        "total_flagged": 1,
+        "high_risk": 1,
+        "medium_risk": 0,
+        "low_risk": 0,
+    }
+
+
+def test_generate_audit_report_returns_502_on_llm_runtime_error(monkeypatch):
+    metrics_store.reset()
+    monkeypatch.delenv("API_KEY", raising=False)
+    monkeypatch.delenv("API_KEYS", raising=False)
+    get_settings.cache_clear()
+
+    app = create_app()
+    app.dependency_overrides[get_anomaly_service] = lambda: StubAnomalyService()
+    app.dependency_overrides[get_llm_service] = lambda: StubLLMReportErrorService()
+    client = TestClient(app)
+
+    response = client.post("/audit-report", json={"max_transactions": 10})
+    assert response.status_code == 502
+    assert "LLM service error" in response.json()["detail"]
+
+
+def test_audit_report_job_endpoint_returns_404_for_unknown_job():
+    client = _build_client()
+    response = client.get("/audit-report/jobs/missing-job")
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Job not found"
+
+
+def test_audit_report_job_marks_failed_on_llm_runtime_error(monkeypatch):
+    metrics_store.reset()
+    report_job_service.reset()
+    monkeypatch.delenv("API_KEY", raising=False)
+    monkeypatch.setenv("API_KEYS", '{"admin-key":"admin"}')
+    get_settings.cache_clear()
+
+    app = create_app()
+    app.dependency_overrides[get_anomaly_service] = lambda: StubAnomalyService()
+    app.dependency_overrides[get_llm_service] = lambda: StubLLMReportErrorService()
+
+    with TestClient(app) as client:
+        create_resp = client.post(
+            "/audit-report/jobs",
+            headers={"x-api-key": "admin-key"},
+            json={"max_transactions": 10},
+        )
+        assert create_resp.status_code == 202
+        job_id = create_resp.json()["job_id"]
+
+        status_resp = _wait_for_job_terminal_state(
+            client,
+            job_id,
+            headers={"x-api-key": "admin-key"},
+        )
+
+    status_body = status_resp.json()
+    assert status_body["status"] == "failed"
+    assert status_body["result"] is None
+    assert "LLM service error" in status_body["error"]
 
 
 def test_get_anomaly_by_transaction_id_found():
@@ -427,6 +621,17 @@ def test_startup_ollama_model_check_passes_when_model_installed(monkeypatch):
     assert response.status_code == 200
 
 
+def test_app_lifespan_starts_for_non_ollama_provider(monkeypatch):
+    monkeypatch.setenv("LLM_PROVIDER", "azure")
+    get_settings.cache_clear()
+
+    app = create_app()
+    with TestClient(app) as client:
+        response = client.get("/health")
+
+    assert response.status_code == 200
+
+
 def test_startup_ollama_model_check_fails_when_model_missing(monkeypatch):
     class _FakeResponse:
         def raise_for_status(self):
@@ -455,6 +660,31 @@ def test_startup_ollama_model_check_fails_when_model_missing(monkeypatch):
 
     app = create_app()
     with pytest.raises(RuntimeError, match="is not installed"):
+        with TestClient(app):
+            pass
+
+
+def test_startup_ollama_model_check_fails_when_ollama_request_errors(monkeypatch):
+    class _FailingAsyncClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def get(self, *_args, **_kwargs):
+            raise httpx.HTTPError("connection failed")
+
+    monkeypatch.setenv("LLM_PROVIDER", "ollama")
+    monkeypatch.setenv("OLLAMA_MODEL", "qwen2:0.5b")
+    get_settings.cache_clear()
+    monkeypatch.setattr(main_module.httpx, "AsyncClient", _FailingAsyncClient)
+
+    app = create_app()
+    with pytest.raises(RuntimeError, match="Ollama startup check failed"):
         with TestClient(app):
             pass
 
@@ -546,7 +776,10 @@ def test_reconciliation_account_integrity_not_found():
 
 def test_reconciliation_account_integrity_empty_account():
     client = _build_client()
-    response = client.get("/reconciliation/account/   ", headers={"x-api-key": "auditor"})  # Empty/whitespace account
+    response = client.get(
+        "/reconciliation/account/   ",
+        headers={"x-api-key": "auditor"},
+    )  # Empty/whitespace account
 
     assert response.status_code == 400
     assert "cannot be empty" in response.json()["detail"]
