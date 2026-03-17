@@ -14,7 +14,11 @@ def _normalize_role(role: str) -> str:
 
 async def get_auth_role(x_api_key: str | None = Header(default=None)) -> str:
     settings = get_settings()
-    configured_map = {k.strip(): _normalize_role(v) for k, v in settings.api_keys.items() if k.strip()}
+    configured_map = {
+        k.strip(): _normalize_role(v)
+        for k, v in settings.api_keys.items()
+        if k.strip()
+    }
     if configured_map:
         if not x_api_key or x_api_key not in configured_map:
             raise HTTPException(status_code=401, detail="Invalid or missing API key")
