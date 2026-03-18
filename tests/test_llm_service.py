@@ -245,3 +245,322 @@ def test_text_with_ollama_wraps_http_errors(monkeypatch):
         assert False, "Expected RuntimeError"
     except RuntimeError as exc:
         assert "LLM API error" in str(exc)
+
+
+def test_explain_with_azure_success(monkeypatch):
+    """Test successful Azure explanation"""
+    from unittest.mock import Mock, MagicMock
+
+    settings = Settings(
+        llm_provider="azure",
+        azure_openai_api_key="test-key",
+        azure_openai_endpoint="https://test.openai.azure.com/",
+        azure_openai_deployment="test-deploy",
+    )
+
+    service = LLMService(settings)
+
+    mock_response = Mock()
+    mock_response.choices = [Mock(message=Mock(content='{"explanation": "test", "risk_level": "High", "possible_cause": "test", "recommended_action": "test"}'))]
+
+    mock_client = MagicMock()
+    mock_client.chat.completions.create.return_value = mock_response
+    service.client = mock_client
+
+    anomaly = AnomalyResponse(
+        transaction_id="T1",
+        amount=100.0,
+        account="4000",
+        anomaly_score=0.9,
+        risk_level="High",
+    )
+
+    async def run_test():
+        result = await service._explain_with_azure(anomaly)
+        assert result["risk_level"] == "High"
+        assert result["explanation"] == "test"
+
+    asyncio.run(run_test())
+
+
+def test_explain_with_azure_missing_client():
+    """Test Azure explanation when client is not configured"""
+    settings = Settings(llm_provider="azure")
+    service = LLMService(settings)
+    service.client = None
+
+    anomaly = AnomalyResponse(
+        transaction_id="T1",
+        amount=100.0,
+        account="4000",
+        anomaly_score=0.9,
+        risk_level="High",
+    )
+
+    try:
+        asyncio.run(service._explain_with_azure(anomaly))
+        assert False, "Expected RuntimeError"
+    except RuntimeError as exc:
+        assert "not configured" in str(exc)
+
+
+def test_generate_audit_report_with_anomalies(monkeypatch):
+    """Test audit report generation"""
+    service = LLMService(Settings(llm_provider="ollama"))
+
+    async def fake_text_completion(system, user):
+        return "Generated report summary"
+
+    monkeypatch.setattr(service, "_text_completion", fake_text_completion)
+
+    anomalies = [
+        AnomalyResponse(
+            transaction_id="T1",
+            amount=100.0,
+            account="4000",
+            anomaly_score=0.9,
+            risk_level="High",
+        ),
+        AnomalyResponse(
+            transaction_id="T2",
+            amount=200.0,
+            account="5000",
+            anomaly_score=0.7,
+            risk_level="Medium",
+        ),
+    ]
+
+    result = asyncio.run(service.generate_audit_report(anomalies))
+    assert result == "Generated report summary"
+
+
+def test_chat_with_ledger_success(monkeypatch):
+    """Test chat with ledger functionality"""
+    service = LLMService(Settings(llm_provider="ollama"))
+
+    async def fake_text_completion(system, user):
+        return "Chat response"
+
+    monkeypatch.setattr(service, "_text_completion", fake_text_completion)
+
+    anomalies = [
+        AnomalyResponse(
+            transaction_id="T1",
+            amount=100.0,
+            account="4000",
+            anomaly_score=0.9,
+            risk_level="High",
+        ),
+    ]
+
+    result = asyncio.run(service.chat_with_ledger("What are the key risks?", anomalies))
+    assert result == "Chat response"
+
+
+def test_explain_with_ollama_success(monkeypatch):
+    """Test successful Ollama explanation"""
+    service = LLMService(Settings(llm_provider="ollama"))
+
+    class DummyResponse:
+        def json(self):
+            return {"response": '{"explanation": "test", "risk_level": "High", "possible_cause": "test", "recommended_action": "test"}'}
+
+        def raise_for_status(self):
+            pass
+
+    class DummyAsyncClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def post(self, *args, **kwargs):
+            return DummyResponse()
+
+    monkeypatch.setattr(llm_module.httpx, "AsyncClient", DummyAsyncClient)
+
+    anomaly = AnomalyResponse(
+        transaction_id="T1",
+        amount=100.0,
+        account="4000",
+        anomaly_score=0.9,
+        risk_level="High",
+    )
+
+    async def run_test():
+        result = await service._explain_with_ollama(anomaly)
+        assert result["risk_level"] == "High"
+        assert "explanation" in result
+
+    asyncio.run(run_test())
+
+
+def test_text_with_azure_success(monkeypatch):
+    """Test successful Azure text completion"""
+    from unittest.mock import Mock, MagicMock
+
+    settings = Settings(
+        llm_provider="azure",
+        azure_openai_api_key="test-key",
+        azure_openai_endpoint="https://test.openai.azure.com/",
+        azure_openai_deployment="test-deploy",
+    )
+
+    service = LLMService(settings)
+
+    mock_response = Mock()
+    mock_response.choices = [Mock(message=Mock(content="Test response"))]
+
+    mock_client = MagicMock()
+    mock_client.chat.completions.create.return_value = mock_response
+    service.client = mock_client
+
+    async def run_test():
+        result = await service._text_with_azure("system", "user question")
+        assert result == "Test response"
+
+    asyncio.run(run_test())
+
+
+def test_text_with_ollama_success(monkeypatch):
+    """Test successful Ollama text completion"""
+    service = LLMService(Settings(llm_provider="ollama"))
+
+    class DummyResponse:
+        def json(self):
+            return {"response": "Ollama response text"}
+
+        def raise_for_status(self):
+            pass
+
+    class DummyAsyncClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def post(self, *args, **kwargs):
+            return DummyResponse()
+
+    monkeypatch.setattr(llm_module.httpx, "AsyncClient", DummyAsyncClient)
+
+    async def run_test():
+        result = await service._text_with_ollama("system", "user question")
+        assert result == "Ollama response text"
+
+    asyncio.run(run_test())
+
+
+def test_explain_azure_with_rate_limit_error(monkeypatch):
+    """Test Azure explanation with rate limit error"""
+    from unittest.mock import Mock, MagicMock
+
+    class DummyRateLimit(Exception):
+        pass
+
+    monkeypatch.setattr(llm_module, "RateLimitError", DummyRateLimit)
+    monkeypatch.setattr(llm_module, "APITimeoutError", Exception)
+
+    settings = Settings(
+        llm_provider="azure",
+        azure_openai_api_key="test-key",
+        azure_openai_endpoint="https://test.openai.azure.com/",
+        azure_openai_deployment="test-deploy",
+    )
+
+    service = LLMService(settings)
+
+    call_count = {"count": 0}
+
+    def mock_create(*args, **kwargs):
+        call_count["count"] += 1
+        if call_count["count"] < 3:
+            raise DummyRateLimit("Rate limited")
+        mock_response = Mock()
+        mock_response.choices = [Mock(message=Mock(content='{"explanation": "test", "risk_level": "High", "possible_cause": "test", "recommended_action": "test"}'))]
+        return mock_response
+
+    mock_client = MagicMock()
+    mock_client.chat.completions.create = mock_create
+    service.client = mock_client
+
+    anomaly = AnomalyResponse(
+        transaction_id="T1",
+        amount=100.0,
+        account="4000",
+        anomaly_score=0.9,
+        risk_level="High",
+    )
+
+    async def run_test():
+        result = await service.explain_anomaly(anomaly)
+        assert result["risk_level"] == "High"
+
+    asyncio.run(run_test())
+
+
+def test_with_retries_handles_json_decode_error(monkeypatch):
+    """Test retry logic with JSON decode error"""
+    class DummyJsonError(Exception):
+        pass
+
+    monkeypatch.setattr(llm_module.json, "JSONDecodeError", DummyJsonError)
+
+    service = LLMService(Settings(llm_provider="ollama"))
+    anomaly = AnomalyResponse(
+        transaction_id="T1",
+        amount=100.0,
+        account="4000",
+        anomaly_score=0.9,
+        risk_level="High",
+    )
+
+    async def bad_json_response(_anomaly):
+        raise DummyJsonError("msg", "doc", 0)
+
+    try:
+        asyncio.run(service._with_retries(bad_json_response, anomaly))
+        assert False, "Expected RuntimeError"
+    except RuntimeError as exc:
+        assert "Invalid JSON" in str(exc)
+
+
+def test_build_dataset_context_empty_list():
+    """Test dataset context with empty anomalies"""
+    context = LLMService._build_dataset_context([], max_rows=10)
+    assert context == "No flagged transactions found."
+
+
+def test_text_with_azure_handles_empty_response(monkeypatch):
+    """Test Azure text response with empty content"""
+    from unittest.mock import Mock, MagicMock
+
+    settings = Settings(
+        llm_provider="azure",
+        azure_openai_api_key="test-key",
+        azure_openai_endpoint="https://test.openai.azure.com/",
+        azure_openai_deployment="test-deploy",
+    )
+
+    service = LLMService(settings)
+
+    mock_response = Mock()
+    mock_response.choices = [Mock(message=Mock(content=None))]
+
+    mock_client = MagicMock()
+    mock_client.chat.completions.create.return_value = mock_response
+    service.client = mock_client
+
+    async def run_test():
+        result = await service._text_with_azure("system", "user question")
+        assert result == ""
+
+    asyncio.run(run_test())
