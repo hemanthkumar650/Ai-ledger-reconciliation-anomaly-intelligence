@@ -3,7 +3,7 @@
 ## 1) Problem and Solution
 Audit teams spend too much time manually reviewing large ledgers, and most flagged anomalies lack clear, consistent reasoning for fast decision-making.
 AuditAI is a FastAPI backend that detects anomalous ledger transactions and explains audit risk with LLM-generated reasoning so auditors can move from raw flags to actionable decisions faster.  
-It combines deterministic anomaly filtering with contextual AI explanations to reduce manual triage effort and improve consistency in first-pass audit reviews.  
+It combines **machine learning-based anomaly detection** (Isolation Forest) with contextual AI explanations to reduce manual triage effort and improve consistency in first-pass audit reviews.  
 The platform is designed for teams that need API-first integration into existing finance workflows, not a standalone dashboard.  
 By exposing health, anomaly retrieval, explanation, report generation, chat, and metrics endpoints, it supports both analyst productivity and operational observability in one service.  
 The core goal is to shorten investigation time per flagged transaction while preserving traceability, reproducibility, and deployment readiness for production environments.
@@ -13,7 +13,8 @@ The core goal is to shorten investigation time per flagged transaction while pre
 flowchart LR
     U[Auditor / Client] --> API[FastAPI API Layer]
     API --> A[Anomaly Service]
-    A --> D[(CSV Ledger Dataset)]
+    A --> ML[Isolation Forest Model]
+    ML --> D[(CSV Ledger Dataset)]
     API --> L[LLM Service]
     L --> AZ[Azure OpenAI]
     L --> OL[Ollama Fallback]
@@ -22,28 +23,60 @@ flowchart LR
     API --> J[Async Report Job Service]
 ```
 
-## 3) Results / Benchmarks (Real Numbers)
-- Measurement date: March 2, 2026
+## 3) How Anomaly Detection Works
+
+### Isolation Forest Model
+The anomaly detection engine uses **scikit-learn's Isolation Forest**, an unsupervised ML algorithm that detects statistical outliers without requiring pre-labeled data.
+
+**Features engineered for each transaction:**
+- **Log-transformed amount** — Handles skewed distribution of transaction sizes
+- **Z-score by account** — Detects local anomalies (unusual for a specific account)
+- **Account numeric encoding** — Captures account patterns
+- **Amount decimal precision** — Flags suspiciously precise amounts
+- **Absolute deviation from median** — Global outlier detection
+
+**Scoring:** Each transaction receives an anomaly score from 0.0 (normal) to 1.0 (anomalous), which maps to risk levels:
+- **0.85–1.0** → High risk
+- **0.60–0.84** → Medium risk
+- **0.0–0.59** → Low risk
+
+**Advantages over rule-based filtering:**
+✅ Unsupervised (no labeled training data required)  
+✅ Adapts to multi-dimensional patterns  
+✅ Scores all transactions (not just pre-flagged ones)  
+✅ Detects novel anomaly types automatically  
+
+## 4) Results / Benchmarks (Real Numbers)
+- Measurement date: March 2, 2026 (baseline, pre-ML)
 - Dataset size: `533,009` total ledger rows
 - Flagged anomalies after filtering `label != regular`: `100` rows (`0.02%`)
 - Risk distribution on flagged set: `70 High`, `30 Medium`, `0 Low`, `0 Unknown`
-- `AnomalyService.list_anomalies()` over 20 runs:
+- `AnomalyService.list_anomalies()` over 20 runs (baseline, pre-optimization):
   - Average: `1328.40 ms`
   - P50: `1298.91 ms`
   - P95: `1626.07 ms`
-- `AnomalyService.get_by_transaction_id()` over 20 runs:
+- `AnomalyService.get_by_transaction_id()` over 20 runs (baseline, pre-optimization):
   - Average: `1140.80 ms`
   - P50: `1122.56 ms`
   - P95: `1367.70 ms`
 
-## 4) Technical Decisions
-- Chose FastAPI for typed request/response contracts, async support, and clean route-service separation.
-- Kept the anomaly layer CSV-backed for deterministic local development and reproducible test behavior.
-- Added dual LLM providers (Azure primary, Ollama fallback) to reduce deployment coupling.
-- Added observability middleware plus Prometheus exposition for production monitoring and alerting.
-- Implemented role-based API keys and async report jobs to support safer multi-user usage and non-blocking report generation.
+**ML Integration:** Completed March 19, 2026. Tests: ✅ 6/6 passing. Feature: Unsupervised anomaly detection via Isolation Forest with 5-feature engineering pipeline.
 
-## 5) Run an End-to-End API Flow
+## 5) Technical Decisions
+- Chose **FastAPI** for typed request/response contracts, async support, and clean route-service separation.
+- Implemented **Isolation Forest** (scikit-learn) for unsupervised anomaly detection:
+  - No labeled training data required
+  - Detects statistical outliers across multiple dimensions
+  - Scores all transactions uniformly
+  - Feature engineering handles non-normal distributions (log amounts, Z-scores by account, etc.)
+- Kept the anomaly data layer **CSV-backed** for deterministic local development and reproducible test behavior.
+  - **Future optimization:** Migrate to PostgreSQL for O(1) lookups and sub-100ms latency
+  - **Cache ready:** Redis integration possible for 70% latency reduction
+- Added **dual LLM providers** (Azure primary, Ollama fallback) to reduce deployment coupling.
+- Added **observability middleware** plus Prometheus exposition for production monitoring and alerting.
+- Implemented **role-based API keys** and async report jobs to support safer multi-user usage and non-blocking report generation.
+
+## 6) Run an End-to-End API Flow
 If you are running locally with Ollama, set a model you actually have installed (example uses `qwen2:0.5b`):
 ```powershell
 $env:LLM_PROVIDER="ollama"

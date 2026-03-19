@@ -1,12 +1,16 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from pathlib import Path
 
 import pandas as pd
 
+from backend.ml.isolation_forest_model import IsolationForestAnomalyModel
 from backend.models.schemas import AnomalyResponse
 from backend.utils.config import get_settings
+
+logger = logging.getLogger(__name__)
 
 
 class AnomalyService:
@@ -31,6 +35,13 @@ class AnomalyService:
         }
         self.high_cutoff = float(high_cutoff)
         self.medium_cutoff = float(medium_cutoff)
+        
+        # Initialize and train ML model
+        self.ml_model = IsolationForestAnomalyModel(contamination=0.1)
+        try:
+            self.ml_model.fit(str(self.csv_path))
+        except Exception as e:
+            logger.warning(f"Failed to train ML model: {e}. Using fallback scoring.")
 
     async def list_anomalies(self) -> list[AnomalyResponse]:
         rows = await asyncio.to_thread(self._load_rows)
@@ -47,9 +58,8 @@ class AnomalyService:
         if not self.csv_path.exists():
             return []
         df = pd.read_csv(self.csv_path)
-        # If dataset has labels (regular/local/global), return only flagged rows.
-        if "label" in df.columns:
-            df = df[df["label"].astype(str).str.lower() != "regular"]
+        # With ML model scoring, score ALL transactions (not just non-regular ones)
+        # The model will determine what's anomalous based on statistical features
         return df.to_dict(orient="records")
 
     def _resolve_score(self, row: dict, fallback_score: float) -> tuple[float, bool]:
@@ -72,27 +82,29 @@ class AnomalyService:
         return "Low"
 
     def _to_model(self, row: dict) -> AnomalyResponse:
-        label = str(row.get("label", "")).lower()
-        risk_from_label = {"global": "High", "local": "Medium", "regular": "Low"}
-        score_from_label = {"global": 0.95, "local": 0.75, "regular": 0.05}
-        base_score = float(row.get("anomaly_score", score_from_label.get(label, 0.5)))
+        # Normalize column names
+        amount = float(row.get("amount", row.get("DMBTR", 0.0)))
+        account = str(row.get("account", row.get("HKONT", "unknown"))).strip()
+        
+        # Get base score from ML model
+        base_score = self.ml_model.predict_anomaly_score(amount, account)
+        
+        # Apply account or category overrides if configured
         score, override_applied = self._resolve_score(row, base_score)
-        risk_level = str(row.get("risk_level", "")).strip()
-        if override_applied:
-            risk_level = self._score_to_risk_level(score)
-        elif not risk_level:
-            risk_level = risk_from_label.get(label, self._score_to_risk_level(score))
+        
+        # Determine risk level from score
+        risk_level = self._score_to_risk_level(score)
 
         return AnomalyResponse(
             transaction_id=AnomalyService._row_transaction_id(row),
-            amount=float(row.get("amount", row.get("DMBTR", 0.0))),
-            account=str(row.get("account", row.get("HKONT", "unknown"))),
+            amount=amount,
+            account=account,
             anomaly_score=score,
             risk_level=risk_level,
             metadata={
                 k: v
                 for k, v in row.items()
-                if k not in {"transaction_id", "amount", "account", "anomaly_score", "risk_level"}
+                if k not in {"transaction_id", "BELNR", "amount", "DMBTR", "account", "HKONT", "anomaly_score", "risk_level"}
             },
         )
 
