@@ -2,108 +2,166 @@
 
 ## 1) Problem and Solution
 Audit teams spend too much time manually reviewing large ledgers, and most flagged anomalies lack clear, consistent reasoning for fast decision-making.
-AuditAI is a FastAPI backend that detects anomalous ledger transactions and explains audit risk with LLM-generated reasoning so auditors can move from raw flags to actionable decisions faster.  
-It combines **machine learning-based anomaly detection** (Isolation Forest) with contextual AI explanations to reduce manual triage effort and improve consistency in first-pass audit reviews.  
-The platform is designed for teams that need API-first integration into existing finance workflows, not a standalone dashboard.  
-By exposing health, anomaly retrieval, explanation, report generation, chat, and metrics endpoints, it supports both analyst productivity and operational observability in one service.  
-The core goal is to shorten investigation time per flagged transaction while preserving traceability, reproducibility, and deployment readiness for production environments.
 
-## 2) Architecture Diagram (Mermaid.js)
+AuditAI is a FastAPI backend with a Next.js dashboard that detects anomalous ledger transactions, explains audit risk with LLM-generated reasoning, and generates concise audit summaries. The goal is to shorten investigation time per flagged transaction while preserving traceability, reproducibility, and deployment readiness for production environments.
+
+It combines:
+- CSV-backed ledger data for deterministic local development
+- Hybrid anomaly selection using dataset labels when available and Isolation Forest when labels are missing
+- LLM-generated explanations, chat responses, and audit reports
+- A React dashboard for anomaly review and reporting
+- Health, readiness, metrics, and role-aware API access for operational visibility
+
+## 2) Architecture Diagram
 ```mermaid
 flowchart LR
     U[Auditor / Client] --> API[FastAPI API Layer]
     API --> A[Anomaly Service]
+    A --> D[(CSV Ledger Dataset)]
     A --> ML[Isolation Forest Model]
-    ML --> D[(CSV Ledger Dataset)]
     API --> L[LLM Service]
     L --> AZ[Azure OpenAI]
-    L --> OL[Ollama Fallback]
+    L --> OL[Ollama]
+    API --> J[Async Report Job Service]
     API --> M[Observability Middleware]
     M --> MET["/metrics and /metrics/prometheus"]
-    API --> J[Async Report Job Service]
+    API --> FE[Next.js Frontend]
 ```
 
 ## 3) How Anomaly Detection Works
+### Hybrid Anomaly Selection
+AuditAI supports two modes:
+
+- If the CSV includes a `label` column, the backend treats non-`regular` rows as the flagged anomaly set.
+- If the CSV has no `label` column, the backend falls back to Isolation Forest scoring.
+
+This keeps the bundled dataset aligned with its authored anomaly labels while still supporting ML-only datasets.
 
 ### Isolation Forest Model
-The anomaly detection engine uses **scikit-learn's Isolation Forest**, an unsupervised ML algorithm that detects statistical outliers without requiring pre-labeled data.
+For unlabeled datasets, AuditAI uses scikit-learn's Isolation Forest to identify statistical outliers without requiring pre-labeled examples.
 
-**Features engineered for each transaction:**
-- **Log-transformed amount** — Handles skewed distribution of transaction sizes
-- **Z-score by account** — Detects local anomalies (unusual for a specific account)
-- **Account numeric encoding** — Captures account patterns
-- **Amount decimal precision** — Flags suspiciously precise amounts
-- **Absolute deviation from median** — Global outlier detection
+Features engineered for each transaction:
+- Log-transformed amount
+- Z-score by account
+- Numeric account encoding
+- Decimal precision of amount
+- Absolute deviation from the median
 
-**Scoring:** Each transaction receives an anomaly score from 0.0 (normal) to 1.0 (anomalous), which maps to risk levels:
-- **0.85–1.0** → High risk
-- **0.60–0.84** → Medium risk
-- **0.0–0.59** → Low risk
+Risk score mapping:
+- `0.85-1.00` -> High
+- `0.60-0.84` -> Medium
+- `0.00-0.59` -> Low
 
-**Advantages over rule-based filtering:**
-✅ Unsupervised (no labeled training data required)  
-✅ Adapts to multi-dimensional patterns  
-✅ Scores all transactions (not just pre-flagged ones)  
-✅ Detects novel anomaly types automatically  
+For the bundled labeled dataset, the app preserves the intended severity mapping:
+- `global` -> High
+- `local` -> Medium
 
-## 4) Results / Benchmarks (Real Numbers)
-- Measurement date: March 2, 2026 (baseline, pre-ML)
+## 4) Results / Benchmarks
+- Measurement date: March 2, 2026
 - Dataset size: `533,009` total ledger rows
 - Flagged anomalies after filtering `label != regular`: `100` rows (`0.02%`)
-- Risk distribution on flagged set: `70 High`, `30 Medium`, `0 Low`, `0 Unknown`
-- `AnomalyService.list_anomalies()` over 20 runs (baseline, pre-optimization):
+- Risk distribution on the flagged set: `70 High`, `30 Medium`, `0 Low`, `0 Unknown`
+- `AnomalyService.list_anomalies()` over 20 baseline runs:
   - Average: `1328.40 ms`
   - P50: `1298.91 ms`
   - P95: `1626.07 ms`
-- `AnomalyService.get_by_transaction_id()` over 20 runs (baseline, pre-optimization):
+- `AnomalyService.get_by_transaction_id()` over 20 baseline runs:
   - Average: `1140.80 ms`
   - P50: `1122.56 ms`
   - P95: `1367.70 ms`
 
-**ML Integration:** Completed March 19, 2026. Tests: ✅ 6/6 passing. Feature: Unsupervised anomaly detection via Isolation Forest with 5-feature engineering pipeline.
-
 ## 5) Technical Decisions
-- Chose **FastAPI** for typed request/response contracts, async support, and clean route-service separation.
-- Implemented **Isolation Forest** (scikit-learn) for unsupervised anomaly detection:
-  - No labeled training data required
-  - Detects statistical outliers across multiple dimensions
-  - Scores all transactions uniformly
-  - Feature engineering handles non-normal distributions (log amounts, Z-scores by account, etc.)
-- Kept the anomaly data layer **CSV-backed** for deterministic local development and reproducible test behavior.
-  - **Future optimization:** Migrate to PostgreSQL for O(1) lookups and sub-100ms latency
-  - **Cache ready:** Redis integration possible for 70% latency reduction
-- Added **dual LLM providers** (Azure primary, Ollama fallback) to reduce deployment coupling.
-- Added **observability middleware** plus Prometheus exposition for production monitoring and alerting.
-- Implemented **role-based API keys** and async report jobs to support safer multi-user usage and non-blocking report generation.
+- FastAPI for typed request/response contracts, async support, and clean route separation
+- Next.js + React + TypeScript for the dashboard UI
+- CSV-backed anomaly data for deterministic local behavior
+- Isolation Forest for unlabeled datasets
+- Explicit label filtering for labeled datasets
+- Cached anomaly service to avoid rebuilding the ML pipeline on every request
+- Async audit report jobs so report generation does not block the API
+- Azure OpenAI primary support with Ollama as a local/self-hosted option
+- Observability middleware plus Prometheus-compatible metrics
+- Role-aware API key support for safer multi-user usage
 
-## 6) Run an End-to-End API Flow
-If you are running locally with Ollama, set a model you actually have installed (example uses `qwen2:0.5b`):
-```powershell
-$env:LLM_PROVIDER="ollama"
-$env:OLLAMA_MODEL="qwen2:0.5b"
+## 6) Run Locally
+### Backend Configuration
+The backend reads configuration from the root [`.env`](./.env) file.
+
+Example Ollama configuration:
+```env
+LLM_PROVIDER=ollama
+OLLAMA_BASE_URL=http://localhost:11434
+OLLAMA_MODEL=llama3.1:8b
+API_KEYS={}
 ```
 
-1. Run preflight checks:
-   ```powershell
-   python ops/check_env.py
-   ```
-2. Start the API:
-   ```powershell
-   uvicorn backend.main:app --reload
-   ```
-3. In a second terminal, run the client flow script:
-   ```powershell
-   python ops/demo_flow.py --base-url http://127.0.0.1:8000
-   ```
-4. If API key auth is enabled, pass it:
-   ```powershell
-   python ops/demo_flow.py --base-url http://127.0.0.1:8000 --api-key <your-key>
-   ```
+If you prefer temporary PowerShell env vars:
+```powershell
+$env:LLM_PROVIDER="ollama"
+$env:OLLAMA_MODEL="llama3.1:8b"
+```
 
-The script exercises `GET /health`, `GET /anomalies`, `POST /explain`, `POST /chat`, `POST /audit-report/jobs`, and `GET /audit-report/jobs/{job_id}`.
+### Start the Backend
+From the repo root:
+```powershell
+python -m uvicorn backend.main:app --port 8010
+```
+
+Health check:
+```powershell
+curl -UseBasicParsing http://localhost:8010/health
+```
 
 Readiness check:
 ```powershell
-curl http://127.0.0.1:8000/ready
+curl -UseBasicParsing http://localhost:8010/ready
 ```
-`/ready` reports `ready` or `not_ready` based on dataset availability and LLM provider configuration (including Ollama model availability).
+
+### Start the Frontend
+In a second terminal:
+```powershell
+cd frontend
+npm install
+npm run dev
+```
+
+Set [frontend/.env.local](./frontend/.env.local) to:
+```env
+NEXT_PUBLIC_API_BASE_URL=http://localhost:8010
+NEXT_PUBLIC_API_KEY=test-key-12345
+```
+
+Open `http://localhost:3000`.
+
+## 7) End-to-End API Flow
+1. Run the environment preflight:
+   ```powershell
+   python ops/check_env.py
+   ```
+2. Start the backend.
+3. Run the demo flow:
+   ```powershell
+   python ops/demo_flow.py --base-url http://127.0.0.1:8010
+   ```
+4. If API key auth is enabled, pass the key:
+   ```powershell
+   python ops/demo_flow.py --base-url http://127.0.0.1:8010 --api-key <your-key>
+   ```
+
+The script exercises:
+- `GET /health`
+- `GET /anomalies`
+- `POST /explain`
+- `POST /chat`
+- `POST /audit-report/jobs`
+- `GET /audit-report/jobs/{job_id}`
+
+## 8) Frontend Pages
+- `/` -> Dashboard
+- `/anomalies` -> Paginated anomaly list
+- `/anomalies/[id]` -> Transaction detail with explanation
+- `/reports` -> Async audit report generation and results
+
+## 9) Notes
+- The bundled dataset is labeled, so dashboard and report counts come from the flagged labeled subset, not from all ledger rows.
+- For unlabeled CSVs, the app falls back to Isolation Forest scoring.
+- The frontend uses a request timeout so dead backend connections surface as visible errors instead of hanging indefinitely.

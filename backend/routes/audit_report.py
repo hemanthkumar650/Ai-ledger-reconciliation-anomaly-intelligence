@@ -1,4 +1,6 @@
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
+import asyncio
+
+from fastapi import APIRouter, Depends, HTTPException
 
 from backend.models.schemas import (
     AuditReportJobResponse,
@@ -51,7 +53,6 @@ async def generate_audit_report(
 @router.post("/audit-report/jobs", response_model=AuditReportJobResponse, status_code=202)
 async def create_audit_report_job(
     request: AuditReportRequest,
-    background_tasks: BackgroundTasks,
     anomaly_service: AnomalyService = Depends(get_anomaly_service),
     llm_service: LLMService = Depends(get_llm_service),
 ) -> AuditReportJobResponse:
@@ -67,7 +68,7 @@ async def create_audit_report_job(
         except Exception as exc:  # pragma: no cover
             report_job_service.mark_failed(job.job_id, f"Unexpected error: {exc}")
 
-    background_tasks.add_task(_run_job)
+    asyncio.create_task(_run_job())
     return AuditReportJobResponse(job_id=job.job_id, status=job.status)
 
 

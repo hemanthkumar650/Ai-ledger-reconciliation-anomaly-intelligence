@@ -12,8 +12,8 @@ def _csv_path(name: str) -> Path:
     return TEST_DATA_DIR / name
 
 
-def test_anomaly_service_loads_all_transactions():
-    """Test that ML-based service loads all transactions (not just labeled flagged ones)."""
+def test_anomaly_service_filters_regular_rows_when_labels_exist():
+    """Labeled datasets should only return non-regular transactions for anomaly workflows."""
     csv_path = _csv_path("anomaly-service-all-rows.csv")
     csv_path.write_text(
         "BELNR,amount,HKONT,label\n"
@@ -26,7 +26,24 @@ def test_anomaly_service_loads_all_transactions():
     service = AnomalyService(str(csv_path))
     rows = asyncio.run(service.list_anomalies())
 
-    # Should load all 3 transactions (ML model scores them all)
+    assert len(rows) == 2
+    assert {row.transaction_id for row in rows} == {"1002", "1003"}
+
+
+def test_anomaly_service_scores_all_rows_when_labels_are_missing():
+    """Unlabeled datasets still rely on ML scoring across all rows."""
+    csv_path = _csv_path("anomaly-service-no-label.csv")
+    csv_path.write_text(
+        "BELNR,amount,HKONT\n"
+        "1001,1000.0,4000\n"
+        "1002,2500.0,5000\n"
+        "1003,5000.0,6000\n",
+        encoding="utf-8",
+    )
+
+    service = AnomalyService(str(csv_path))
+    rows = asyncio.run(service.list_anomalies())
+
     assert len(rows) == 3
     assert {row.transaction_id for row in rows} == {"1001", "1002", "1003"}
 
@@ -93,6 +110,38 @@ def test_category_score_override_applies_when_account_override_missing():
     assert row.risk_level == "Medium"
 
 
+def test_label_global_maps_to_high_risk_when_no_override_exists():
+    csv_path = _csv_path("anomaly-service-global-label.csv")
+    csv_path.write_text(
+        "transaction_id,amount,account,label\n"
+        "G1,700.0,5100,global\n",
+        encoding="utf-8",
+    )
+
+    service = AnomalyService(str(csv_path))
+    row = asyncio.run(service.get_by_transaction_id("G1"))
+
+    assert row is not None
+    assert abs(row.anomaly_score - 0.95) < 1e-9
+    assert row.risk_level == "High"
+
+
+def test_label_local_maps_to_medium_risk_when_no_override_exists():
+    csv_path = _csv_path("anomaly-service-local-label.csv")
+    csv_path.write_text(
+        "transaction_id,amount,account,label\n"
+        "L1,700.0,5100,local\n",
+        encoding="utf-8",
+    )
+
+    service = AnomalyService(str(csv_path))
+    row = asyncio.run(service.get_by_transaction_id("L1"))
+
+    assert row is not None
+    assert abs(row.anomaly_score - 0.7) < 1e-9
+    assert row.risk_level == "Medium"
+
+
 def test_ml_model_produces_valid_anomaly_scores():
     """Test that ML model produces valid scores between 0.0 and 1.0."""
     csv_path = _csv_path("anomaly-service-ml-scores.csv")
@@ -137,4 +186,3 @@ def test_ml_model_detects_statistical_outliers():
     avg_normal_score = sum(r.anomaly_score for r in normal_transactions) / len(normal_transactions)
     assert outlier.anomaly_score > avg_normal_score, \
         f"Outlier score {outlier.anomaly_score} not > avg normal {avg_normal_score}"
-
